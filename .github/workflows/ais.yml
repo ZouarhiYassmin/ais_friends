@@ -24,7 +24,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Lancer le script
-        run: python collect_ais.py
+        run: data_collector.py
 
       - name: Commit et push des données
         env:
