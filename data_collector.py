@@ -1,30 +1,65 @@
+import os
 import requests
-from bs4 import BeautifulSoup
 import pandas as pd
+from bs4 import BeautifulSoup
 
-url = "https://www.aisfriends.com/vessels/AFRICAN-PUFFIN/9636448/311000789/76417"
 
-headers = {
-    "User-Agent": "Mozilla/5.0"
+URL = "https://www.aisfriends.com/vessels/AFRICAN-PUFFIN/9636448/311000789/76417"
+CSV_FILE = "data/ais_positions.csv"
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
 }
 
-response = requests.get(url, headers=headers)
-soup = BeautifulSoup(response.text, "html.parser")
+os.makedirs("data", exist_ok=True)
 
-print(soup.title.text)
+print("Downloading AIS page...")
+
+response = requests.get(URL, headers=HEADERS, timeout=30)
+html = response.text
+
+print("Status:", response.status_code)
+
+soup = BeautifulSoup(html, "html.parser")
 tables = soup.find_all("table")
 
-print(len(tables))
-table = tables[0]
-rows = table.find_all("tr")
+# Protection anti crash
+if not tables:
+    print(" No AIS table found (probably blocked).")
+    exit(0)
 
-data = []
+rows = tables[0].find_all("tr")
+
+new_data = []
 
 for row in rows[1:]:
-    cols = row.find_all("td")
-    cols = [c.text.strip() for c in cols]
-    data.append(cols)
+    cols = [c.text.strip() for c in row.find_all("td")]
+    if cols:
+        new_data.append(cols)
 
-df = pd.DataFrame(data)
-print(df.head())
-df.to_csv("african_puffin_ais.csv", index=False)
+if not new_data:
+    print("No new AIS data.")
+    exit(0)
+
+new_df = pd.DataFrame(new_data)
+
+print(f"New rows collected: {len(new_df)}")
+
+
+if os.path.exists(CSV_FILE):
+    old_df = pd.read_csv(CSV_FILE)
+    combined_df = pd.concat([old_df, new_df], ignore_index=True)
+
+    
+    combined_df = combined_df.drop_duplicates()
+
+else:
+    combined_df = new_df
+
+
+combined_df.to_csv(CSV_FILE, index=False)
+
+print(f"Dataset updated: {CSV_FILE}")
+print(f"Total rows: {len(combined_df)}")
