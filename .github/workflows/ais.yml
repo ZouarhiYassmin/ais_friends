@@ -22,6 +22,8 @@ jobs:
 
       - name: Installer les librairies
         run: pip install -r requirements.txt
+      - name: Install Playwright browser
+        run: playwright install chromium  
 
       - name: Lancer le script
         run: python data_collector.py
