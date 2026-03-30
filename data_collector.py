@@ -1,72 +1,74 @@
 import os
+import json
+import asyncio
 import pandas as pd
-from playwright.sync_api import sync_playwright
+from datetime import datetime, timezone
+import websockets
 
-URL = "https://www.aisfriends.com/vessels/AFRICAN-PUFFIN/9636448/311000789/76417"
+MMSI = "311000789"
+API_KEY = os.environ["AISSTREAM_API_KEY"]  
 CSV_FILE = "data/african_puffin_ais.csv"
 
 os.makedirs("data", exist_ok=True)
 
-print("Launching browser...")
+async def fetch_ais():
+    url = "wss://stream.aisstream.io/v0/stream"
 
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
-    page = browser.new_page(
-        user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    )
+    subscribe_msg = {
+        "APIKey": API_KEY,
+        "BoundingBoxes": [[[-90, -180], [90, 180]]],  # monde entier
+        "FilterMessageTypes": ["PositionReport"],
+        "MMSI": [MMSI]
+    }
 
-    page.goto(URL, timeout=60000)
+    print(f"Connecting to AISStream for MMSI {MMSI}...")
 
-    #
-    try:
-        page.wait_for_selector("table", timeout=20000)
-    except:
-        print("No table found after waiting — site may have changed.")
-        browser.close()
-        exit(0)
+    async with websockets.connect(url) as ws:
+        await ws.send(json.dumps(subscribe_msg))
 
-    
-    html = page.content()
-    browser.close()
+        
+        try:
+            raw = await asyncio.wait_for(ws.recv(), timeout=30)
+            data = json.loads(raw)
 
-print("Page loaded. Parsing...")
+            msg = data.get("Message", {}).get("PositionReport", {})
+            meta = data.get("MetaData", {})
 
-from bs4 import BeautifulSoup
-soup = BeautifulSoup(html, "html.parser")
-tables = soup.find_all("table")
+            row = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "mmsi": meta.get("MMSI", MMSI),
+                "ship_name": meta.get("ShipName", "AFRICAN PUFFIN").strip(),
+                "latitude": msg.get("Latitude"),
+                "longitude": msg.get("Longitude"),
+                "speed": msg.get("Sog"),         # Speed Over Ground
+                "course": msg.get("Cog"),         # Course Over Ground
+                "heading": msg.get("TrueHeading"),
+                "nav_status": msg.get("NavigationalStatus"),
+            }
 
-if not tables:
-    print("No AIS table found.")
+            print(f"Position received: lat={row['latitude']}, lon={row['longitude']}, speed={row['speed']}")
+            return row
+
+        except asyncio.TimeoutError:
+            print("No position data received within 30s — vessel may be out of coverage.")
+            return None
+
+row = asyncio.run(fetch_ais())
+
+if row is None:
     exit(0)
 
-
-header_row = tables[0].find("tr")
-headers = [th.text.strip() for th in header_row.find_all(["th", "td"])]
-
-rows = tables[0].find_all("tr")[1:]
-new_data = []
-
-for row in rows:
-    cols = [c.text.strip() for c in row.find_all("td")]
-    if cols:
-        new_data.append(cols)
-
-if not new_data:
-    print("No new AIS data.")
-    exit(0)
-
-new_df = pd.DataFrame(new_data, columns=headers if headers else None)
-print(f"New rows collected: {len(new_df)}")
-
+new_df = pd.DataFrame([row])
 
 if os.path.exists(CSV_FILE) and os.path.getsize(CSV_FILE) > 0:
     old_df = pd.read_csv(CSV_FILE)
     combined_df = pd.concat([old_df, new_df], ignore_index=True)
-    combined_df = combined_df.drop_duplicates()
+    combined_df = combined_df.drop_duplicates(subset=["timestamp"])
 else:
     combined_df = new_df
 
 combined_df.to_csv(CSV_FILE, index=False)
-print(f"Dataset updated: {CSV_FILE}")
-print(f"Total rows: {len(combined_df)}")
+print(f"Dataset updated: {CSV_FILE} — Total rows: {len(combined_df)}")
+
+
+
