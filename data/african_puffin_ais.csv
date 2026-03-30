@@ -1,0 +1,2 @@
+timestamp,mmsi,ship_name,latitude,longitude,speed,course,heading,nav_status
+2026-03-30T21:21:28.768020+00:00,366952000,CG JUNIPER,21.30841666666667,-157.87335,0,123,33,5
