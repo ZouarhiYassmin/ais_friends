@@ -2,7 +2,7 @@ name: AIS Collector
 
 on:
   schedule:
-    - cron: "*/10 * * * *"   # toutes les 10 minutes
+    - cron: "*/10 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -33,46 +33,6 @@ jobs:
           if [[ -n $(git status --porcelain data/) ]]; then
             git add data/*.csv
             git commit -m "Update AIS data $(date -u '+%Y-%m-%d %H:%M')"
-            git push
-          else
-            echo "No changes to commit"
-          finame: AIS Collector
-
-on:
-  schedule:
-    - cron: "*/5 * * * *"
-  workflow_dispatch:
-
-jobs:
-  run-script:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - name: Télécharger le repo
-        uses: actions/checkout@v4
-
-      - name: Installer Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
-      - name: Installer les librairies
-        run: pip install -r requirements.txt
-
-      - name: Lancer le script
-        env:
-          AISSTREAM_API_KEY: ${{ secrets.AISSTREAM_API_KEY }}
-        run: python data_collector.py
-
-      - name: Commit et push des données
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          if [[ -n $(git status --porcelain data/) ]]; then
-            git add data/*.csv
-            git commit -m "Update AIS dataset"
             git push
           else
             echo "No changes to commit"
