@@ -5,70 +5,78 @@ import pandas as pd
 from datetime import datetime, timezone
 import websockets
 
-MMSI = "311000789"
-API_KEY = os.environ["AISSTREAM_API_KEY"]  
-CSV_FILE = "data/african_puffin_ais.csv"
+API_KEY = os.environ["AISSTREAM_API_KEY"]
+
+
+VESSELS = [
+    {"mmsi": "311000789", "name": "african_puffin"}
+]
 
 os.makedirs("data", exist_ok=True)
 
-async def fetch_ais():
+async def fetch_vessel(mmsi: str, name: str):
     url = "wss://stream.aisstream.io/v0/stream"
 
     subscribe_msg = {
         "APIKey": API_KEY,
-        "BoundingBoxes": [[[-90, -180], [90, 180]]],  # monde entier
+        "BoundingBoxes": [[[-90, -180], [90, 180]]],
         "FilterMessageTypes": ["PositionReport"],
-        "MMSI": [MMSI]
+        "MMSI": [mmsi]   
     }
 
-    print(f"Connecting to AISStream for MMSI {MMSI}...")
+    print(f"[{name}] Connecting for MMSI {mmsi}...")
 
-    async with websockets.connect(url) as ws:
-        await ws.send(json.dumps(subscribe_msg))
+    try:
+        async with websockets.connect(url) as ws:
+            await ws.send(json.dumps(subscribe_msg))
 
-        
-        try:
-            raw = await asyncio.wait_for(ws.recv(), timeout=30)
+            
+            raw = await asyncio.wait_for(ws.recv(), timeout=45)
             data = json.loads(raw)
+
+            received_mmsi = str(data.get("MetaData", {}).get("MMSI", ""))
+            if received_mmsi != mmsi:
+                print(f"[{name}] Wrong MMSI received ({received_mmsi}), skipping.")
+                return
 
             msg = data.get("Message", {}).get("PositionReport", {})
             meta = data.get("MetaData", {})
 
             row = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "mmsi": meta.get("MMSI", MMSI),
-                "ship_name": meta.get("ShipName", "AFRICAN PUFFIN").strip(),
-                "latitude": msg.get("Latitude"),
-                "longitude": msg.get("Longitude"),
-                "speed": msg.get("Sog"),         # Speed Over Ground
-                "course": msg.get("Cog"),         # Course Over Ground
-                "heading": msg.get("TrueHeading"),
-                "nav_status": msg.get("NavigationalStatus"),
+                "timestamp":   datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                "mmsi":        mmsi,
+                "ship_name":   meta.get("ShipName", name).strip(),
+                "latitude":    msg.get("Latitude"),
+                "longitude":   msg.get("Longitude"),
+                "speed_knots": msg.get("Sog"),
+                "course":      msg.get("Cog"),
+                "heading":     msg.get("TrueHeading"),
+                "nav_status":  msg.get("NavigationalStatus"),
             }
 
-            print(f"Position received: lat={row['latitude']}, lon={row['longitude']}, speed={row['speed']}")
-            return row
+            print(f"[{name}] ✅ lat={row['latitude']}, lon={row['longitude']}, speed={row['speed_knots']}kn")
 
-        except asyncio.TimeoutError:
-            print("No position data received within 30s — vessel may be out of coverage.")
-            return None
+          
+            csv_file = f"data/{name}_ais.csv"
 
-row = asyncio.run(fetch_ais())
-
-if row is None:
-    exit(0)
-
-new_df = pd.DataFrame([row])
-
-if os.path.exists(CSV_FILE) and os.path.getsize(CSV_FILE) > 0:
-    old_df = pd.read_csv(CSV_FILE)
-    combined_df = pd.concat([old_df, new_df], ignore_index=True)
-    combined_df = combined_df.drop_duplicates(subset=["timestamp"])
-else:
-    combined_df = new_df
-
-combined_df.to_csv(CSV_FILE, index=False)
-print(f"Dataset updated: {CSV_FILE} — Total rows: {len(combined_df)}")
+            if os.path.exists(csv_file) and os.path.getsize(csv_file) > 0:
+                old_df = pd.read_csv(csv_file)
+                combined_df = pd.concat([old_df, pd.DataFrame([row])], ignore_index=True)
+            else:
+                combined_df = pd.DataFrame([row])
 
 
+            combined_df = combined_df.drop_duplicates(subset=["timestamp"])
+            combined_df.to_csv(csv_file, index=False)
+            print(f"[{name}] Saved to {csv_file} — Total rows: {len(combined_df)}")
 
+    except asyncio.TimeoutError:
+        print(f"[{name}] ⚠️ No data received in 45s — vessel may be offline or out of coverage.")
+    except Exception as e:
+        print(f"[{name}] ❌ Error: {e}")
+
+async def main():
+  
+    await asyncio.gather(*[fetch_vessel(v["mmsi"], v["name"]) for v in VESSELS])
+
+asyncio.run(main())
